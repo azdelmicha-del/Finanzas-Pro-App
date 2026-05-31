@@ -4,12 +4,13 @@
   "main": "src/server.js",
   "scripts": {
     "start": "node src/server.js",
+    "migrate": "node migrate.js",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "keywords": [],
   "author": "",
   "license": "ISC",
-  "description": "Finanzas Pro - Gestión financiera para e-commerce",
+  "description": "Finanzas Pro - Gestión financiera para e-commerce (Migrado a MongoDB)",
   "dependencies": {
     "bcrypt": "^6.0.0",
     "cors": "^2.8.6",
@@ -17,8 +18,11 @@
     "exceljs": "^4.4.0",
     "express": "^4.22.1",
     "express-rate-limit": "^8.3.2",
-    "multer": "^2.1.1",
-    "sqlite3": "^5.1.7"
+    "mongoose": "^8.24.0",
+    "multer": "^2.1.1"
+  },
+  "devDependencies": {
+    "better-sqlite3": "^12.10.0"
   },
   "engines": {
     "node": ">=18.0.0"

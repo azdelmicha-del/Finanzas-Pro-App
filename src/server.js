@@ -3,7 +3,7 @@ const multer     = require('multer');
 const cors       = require('cors');
 const path       = require('path');
 const fs         = require('fs');
-const sqlite3    = require('sqlite3').verbose();
+const mongoose   = require('mongoose');
 const bcrypt     = require('bcrypt');
 const saltRounds = 12;
 const rateLimit  = require('express-rate-limit');
@@ -12,26 +12,18 @@ require('dotenv').config();
 const app  = express();
 const PORT = process.env.PORT || 10000;
 
-/* ── RUTAS DEL PROYECTO ───────────────────────────────────────────────── */
 const PROJECT_ROOT = path.resolve(__dirname, '..');
 
-/* ── CREDENCIALES ADMIN ─────────────────────────────────────────────── */
 const ADMIN_USERNAME = process.env.ADMIN_USERNAME || 'azdelmicha@gmail.com';
 const ADMIN_PASSWORD = String(process.env.ADMIN_PASSWORD || '').trim();
 const ADMIN_PASSWORD_HASH = '$2b$12$u6v0lWi8BFhEn11pWgphGuykk/YiFT.HGF76w4KtllEU0f2NwOVv2';
-let adminUserId = null;
+const MONGODB_URI = process.env.MONGODB_URI;
 
-/* ── PERSISTENCIA DE DATOS ──────────────────────────────────────────── */
-const DATA_DIR    = fs.existsSync('/data') ? '/data' : path.join(PROJECT_ROOT, 'data');
-const UPLOADS_DIR = path.join(DATA_DIR, 'uploads');
-const DB_PATH     = path.join(DATA_DIR, 'database.sqlite');
-
-console.log('--- CONFIGURACIÓN DE PERSISTENCIA ---');
-console.log('Carpeta de datos:', DATA_DIR);
-console.log('Ruta de base de datos:', DB_PATH);
-
-if (!fs.existsSync(DATA_DIR))    fs.mkdirSync(DATA_DIR,    { recursive: true });
+const UPLOADS_DIR = path.join(PROJECT_ROOT, 'data', 'uploads');
 if (!fs.existsSync(UPLOADS_DIR)) fs.mkdirSync(UPLOADS_DIR, { recursive: true });
+
+console.log('--- CONFIGURACIÓN ---');
+console.log('Uploads:', UPLOADS_DIR);
 
 /* ── MIDDLEWARE ─────────────────────────────────────────────────────── */
 app.use(cors());
@@ -43,8 +35,8 @@ app.use(express.static(PROJECT_ROOT));
 
 /* ── RATE LIMITING ──────────────────────────────────────────────────── */
 const authLimiter = rateLimit({
-    windowMs: 15 * 60 * 1000, // 15 minutes
-    max: 5, // limit each IP to 5 requests per windowMs
+    windowMs: 15 * 60 * 1000,
+    max: 5,
     message: { success: false, message: 'Demasiados intentos, por favor intente más tarde.' },
     standardHeaders: true,
     legacyHeaders: false,
@@ -120,9 +112,8 @@ app.post('/chat', async (req, res) => {
     if (!message) return res.status(400).json({ response: 'Mensaje vacío.' });
 
     let systemPrompt;
-    
+
     if (userRole === 'admin') {
-        // Admin tiene acceso completo a todos los datos
         systemPrompt =
             'Eres "Finanzas AI", asistente inteligente de la app Finanzas Pro de 2Nexora, ' +
             'para gestión de e-commerce y finanzas personales en República Dominicana. ' +
@@ -133,7 +124,6 @@ app.post('/chat', async (req, res) => {
             'Puedes analizar y comparar datos de todas las áreas. ' +
             'Usa texto plano con saltos de línea, sin markdown con asteriscos ni almohadillas.';
     } else {
-        // Usuario regular solo tiene acceso a Finanzas Personales
         systemPrompt =
             'Eres "Finanzas AI", asistente inteligente de la app Finanzas Pro de 2Nexora, ' +
             'para gestión de finanzas personales en República Dominicana. ' +
@@ -149,14 +139,12 @@ app.post('/chat', async (req, res) => {
         const fmt = (n) => 'RD$ ' + Number(n || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
         const fmtUSD = (n) => '$ ' + Number(n || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
         const c = context;
-        
+
         if (userRole === 'admin') {
-            // Admin ve TODO
             systemPrompt += '\n\n═══════════════════════════════════════════════════════';
             systemPrompt += '\n📊 RESUMEN COMPLETO - MODO ADMINISTRADOR';
             systemPrompt += '\n═══════════════════════════════════════════════════════';
 
-            // FINANZAS PERSONALES
             if (c.salarios !== undefined) {
                 systemPrompt += '\n\n💰 INGRESOS: ' + fmt(c.salarios);
             }
@@ -173,30 +161,27 @@ app.post('/chat', async (req, res) => {
                 systemPrompt += '\n💳 PRÉSTAMOS: ' + fmt(c.prestamos);
             }
 
-            // Effi
             if (c.effi) {
                 const e = c.effi;
                 const g = (e.recaudo||0) - (e.compra||0) - (e.fleteCon||0) - (e.fleteDev||0);
                 systemPrompt += '\n\n🛒 EFFI: ' + fmt(e.recaudo) + ' | Ganancia: ' + fmt(g);
             }
 
-            // Transporte
             if (c.transporte) {
                 const t = c.transporte;
                 systemPrompt += '\n🚚 TRANSPORTE: ' + t.totalOrdenes + ' órdenes';
             }
-            
+
             systemPrompt += '\n═══════════════════════════════════════════════════════';
         } else {
-            // Usuario regular solo ve finanzas personales
             systemPrompt += '\n\n═══════════════════════════════════════════════════════';
             systemPrompt += '\n💰 FINANZAS PERSONALES';
             systemPrompt += '\n═══════════════════════════════════════════════════════';
-            
+
             if (c.salarios !== undefined) systemPrompt += '\n📈 Ingresos: ' + fmt(c.salarios);
             if (c.gastosFijos !== undefined) systemPrompt += '\n📉 Gastos: ' + fmt(c.gastosFijos);
             if (c.ahorros !== undefined) systemPrompt += '\n🏦 Ahorros: ' + fmt(c.ahorros);
-            
+
             systemPrompt += '\n═══════════════════════════════════════════════════════';
         }
     }
@@ -204,9 +189,6 @@ app.post('/chat', async (req, res) => {
     const googleKey    = process.env.GOOGLE_AI_KEY;
     const openaiKey    = process.env.OPENAI_API_KEY;
     const anthropicKey = process.env.ANTHROPIC_API_KEY;
-
-    // ── Prioridad: Gemini → OpenAI → Claude → Offline ─────────────
-    // Cada proveedor falla hacia el siguiente sin cortar la cadena
 
     if (googleKey) {
         try {
@@ -237,7 +219,6 @@ app.post('/chat', async (req, res) => {
             return res.json({ response: text });
         } catch (err) {
             console.error('❌ Gemini error:', err.message, '— intentando siguiente proveedor');
-            // Continúa al siguiente proveedor en vez de irse offline
         }
     }
 
@@ -274,7 +255,6 @@ app.post('/chat', async (req, res) => {
             return res.json({ response: text });
         } catch (err) {
             console.error('❌ OpenAI error CAPTURADO:', err.message);
-            // Continúa al siguiente proveedor
         }
     } else if (openaiKey && openaiKey.includes('your_')) {
         console.warn('⚠️  OPENAI_API_KEY contiene "your_" — clave no configurada, saltando');
@@ -312,14 +292,12 @@ app.post('/chat', async (req, res) => {
         }
     }
 
-    // Sin ninguna API key funcional — modo offline
     console.log('💡 Modo offline activo (ninguna API respondió)');
     return res.json({ response: buildOfflineResponse(message, context) });
 });
 
 // ═══════════════════════════════════════════════════════════════════
-//  MOTOR DE RESPUESTAS INTELIGENTE — sin API key, 100% local
-//  Cubre más de 30 intenciones con análisis real de los datos.
+//  MOTOR DE RESPUESTAS OFFLINE
 // ═══════════════════════════════════════════════════════════════════
 function buildOfflineResponse(message, ctx) {
     const n  = s => String(s || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
@@ -329,7 +307,6 @@ function buildOfflineResponse(message, ctx) {
     const sign = v => v >= 0 ? '✅' : '⚠️';
     const has  = (...words) => words.some(w => msg.includes(n(w)));
 
-    // ── Utilidades de cálculo ──────────────────────────────────────
     const effi = ctx && ctx.effi ? ctx.effi : null;
     const tr   = ctx && ctx.transporte ? ctx.transporte : null;
     const fp   = ctx || {};
@@ -359,7 +336,6 @@ function buildOfflineResponse(message, ctx) {
         return { sal, gast, aho, banc, prest, inf, disp, patr };
     };
 
-    // ── Saludos y ayuda ────────────────────────────────────────────
     if (has('hola','buenos','buenas','hey','hi','saludos')) {
         return `¡Hola! Soy tu asistente financiero de Finanzas Pro 👋\n\nPuedo ayudarte con:\n• 💰 Ganancias y rentabilidad de Effi\n• 📦 Estado de guías y devoluciones\n• 💳 Deudas y préstamos\n• 🐷 Ahorros y proyecciones\n• 🏦 Saldos bancarios\n• 📊 Resumen general de tus finanzas\n• ⚠️  Alertas y riesgos\n\n¿Sobre qué quieres saber?`;
     }
@@ -368,7 +344,6 @@ function buildOfflineResponse(message, ctx) {
         return `Estos son los temas que manejo:\n\n📊 EFFI COMMERCE\n• "¿cuál es mi ganancia?"\n• "¿cómo están mis fletes?"\n• "analiza mis devoluciones"\n• "¿cuánto gasté en publicidad?"\n• "rentabilidad del negocio"\n• "¿cuál es mi ROI?"\n• "costos de operación"\n\n🚚 TRANSPORTE\n• "estado de mis guías"\n• "¿cuántas devoluciones tengo?"\n• "¿qué porcentaje entrego?"\n\n💼 FINANZAS PERSONALES\n• "¿cuánto me queda libre?"\n• "mis deudas y préstamos"\n• "proyección de ahorros"\n• "patrimonio neto"\n• "¿estoy ahorrando bien?"\n\n🔍 ANÁLISIS\n• "resumen general"\n• "alertas financieras"\n• "¿estoy bien o mal?"`;
     }
 
-    // ── EFFI: Ganancia / Rentabilidad / ROI ───────────────────────
     if (has('ganancia','utilidad','rentab','roi','rendimiento','profit')) {
         const e = calcEffi();
         if (!e) return '📂 Carga el archivo de Effi (.xls) para ver tu rentabilidad.';
@@ -381,7 +356,6 @@ function buildOfflineResponse(message, ctx) {
         return `${estado}\n\n💰 RENTABILIDAD EFFI\n• Recaudo de ventas:    ${fmt(e.ingresos)}\n• Costo mercancía:      ${fmt(e.costos)}\n• Fletes (total):       ${fmt(e.fletes)}\n• Comisiones/Fulfill.:  ${fmt(e.comisiones)}\n• Total egresos:        ${fmt(e.egresos)}\n────────────────────────\n• Ganancia neta:        ${fmt(e.ganancia)}\n• Margen de ganancia:   ${e.margen.toFixed(2)}%\n• ROI sobre costo:      ${e.roi.toFixed(2)}%\n\n💡 ${consejo}`;
     }
 
-    // ── EFFI: Fletes ───────────────────────────────────────────────
     if (has('flete','envio','envío','transporte','logistica','logística')) {
         const e = calcEffi();
         if (!e || !effi) return '📂 Carga el archivo de Effi para ver el detalle de fletes.';
@@ -392,13 +366,11 @@ function buildOfflineResponse(message, ctx) {
         return `🚚 DETALLE DE FLETES\n• Flete con recaudo:    ${fmt(effi.fleteCon)}\n• Flete devolución:     ${fmt(effi.fleteDev)}\n• Flete sin recaudo:    ${fmt(effi.fleteSin)}\n────────────────────────\n• Total fletes:         ${fmt(e.fletes)}\n• % sobre ingresos:     ${pctFletes}%\n\n${alerta}`;
     }
 
-    // ── EFFI: Devoluciones (Effi) ──────────────────────────────────
     if (has('devoluci','devolucion') && !tr) {
         if (!effi) return '📂 Carga el archivo de Effi para ver devoluciones.';
         return `📦 DEVOLUCIONES EN EFFI\n• Flete de devolución:  ${fmt(effi.fleteDev)}\n• Indemnizaciones:      ${fmt(effi.indemnizacion)}\n\n💡 Las devoluciones generan costo de flete doble (envío + retorno). Cada devolución reduce directamente tu ganancia neta.`;
     }
 
-    // ── TRANSPORTE: Guías y devoluciones ──────────────────────────
     if (has('guia','guías','guias','estado','orden','ordenes','órdenes','entrega','reparto') || (has('devoluci') && tr)) {
         if (!tr) return '📂 Carga el reporte de Guías de Transporte (.xlsx) para ver el estado.';
         const pEntrega = tr.totalOrdenes > 0 ? (tr.entregadas  / tr.totalOrdenes * 100) : 0;
@@ -409,14 +381,12 @@ function buildOfflineResponse(message, ctx) {
         return `📦 ESTADO DE GUÍAS\n• Total órdenes:        ${tr.totalOrdenes}\n• Entregadas:           ${tr.entregadas} (${pEntrega.toFixed(1)}%) ${pEntrega >= 75 ? '✅' : '⚠️'}\n• Devoluciones:         ${tr.devoluciones} (${pDevol.toFixed(1)}%) ${pDevol <= 15 ? '✅' : '🚨'}\n• En tránsito:          ${tr.enTransito} (${pTransit.toFixed(1)}%)\n• En reparto:           ${tr.enReparto}\n• Con novedad:          ${tr.novedad}\n\n${estadoEntrega}\n${estadoDevol}`;
     }
 
-    // ── EFFI: Recaudo / Ventas ─────────────────────────────────────
     if (has('recaudo','venta','ventas','ingreso','ingresos','cobro')) {
         if (!effi) return '📂 Carga el archivo de Effi para ver el recaudo.';
         const e = calcEffi();
         return `💵 RECAUDO Y VENTAS\n• Total recaudado:      ${fmt(effi.recaudo)}\n• Retiro de cuenta:     ${fmt(effi.retiro)}\n• Dinero disponible:    ${fmt((effi.recaudo||0) - (effi.retiro||0))}\n\n💡 El recaudo incluye todos los pagos recibidos por ventas entregadas. El retiro es lo que ya moviste fuera de Effi.`;
     }
 
-    // ── EFFI: Costos de operación ──────────────────────────────────
     if (has('costo','gasto','egreso','fulfillment','comision','comisión','operacion','operación')) {
         const e = calcEffi();
         if (!e || !effi) return '📂 Carga el archivo de Effi para ver los costos.';
@@ -426,7 +396,6 @@ function buildOfflineResponse(message, ctx) {
         return `📊 ESTRUCTURA DE COSTOS\n• Mercancía:            ${fmt(e.costos)} (${pCosto}%)\n• Fletes totales:       ${fmt(e.fletes)} (${pFletes}%)\n• Comis./Fulfillment:   ${fmt(e.comisiones)} (${pCom}%)\n────────────────────────\n• Total egresos:        ${fmt(e.egresos)}\n• Ingresos:             ${fmt(e.ingresos)}\n• Ganancia:             ${fmt(e.ganancia)}\n\n💡 El mayor costo es ${e.costos >= e.fletes ? 'la mercancía' : 'los fletes'}. Optimiza ese rubro primero para mejorar tu margen.`;
     }
 
-    // ── Personal: Disponible / Sobrante ───────────────────────────
     if (has('disponible','sobrante','libre','queda','sobra','liquidez')) {
         const p = calcPersonal();
         const estado = p.disp >= 0 ? '✅ Tienes dinero disponible' : '🚨 Tus compromisos superan tus ingresos';
@@ -438,7 +407,6 @@ function buildOfflineResponse(message, ctx) {
         return `💼 DISPONIBILIDAD PERSONAL\n• Ingresos totales:     ${fmt(p.sal)}\n• Gastos fijos:         ${fmt(p.gast)}\n• Ahorros mensuales:    ${fmt(p.aho)}\n────────────────────────\n• Disponible:           ${fmt(p.disp)}\n\n${estado}\n${consejo}`;
     }
 
-    // ── Personal: Ahorros ─────────────────────────────────────────
     if (has('ahorro','ahorrar','ahorra','fondo','meta','proyeccion','proyección')) {
         const p = calcPersonal();
         const currentMonth = new Date().getMonth() + 1;
@@ -452,7 +420,6 @@ function buildOfflineResponse(message, ctx) {
         return `🐷 AHORROS Y PROYECCIÓN\n• Ahorro mensual:       ${fmt(p.aho)}\n• % de tus ingresos:    ${pctAho}%\n• Resto del año:        ${fmt(metaRestoAno)} (${mesesRestantes} meses)\n• Proyección 6 meses:   ${fmt(meta6m)}\n• Proyección 12 meses:  ${fmt(meta12m)}\n• Ahorro ideal (20%):   ${fmt(recom)}\n\n${estadoAho}\n${p.aho < recom && p.sal > 0 ? `💡 Para llegar al 20% ideal, deberías ahorrar ${fmt(recom - p.aho)} adicionales al mes.` : p.aho >= recom ? '🎉 ¡Estás cumpliendo el objetivo de ahorro del 20%!' : ''}`;
     }
 
-    // ── Personal: Deudas y préstamos ──────────────────────────────
     if (has('deuda','prestamo','préstamo','credito','crédito','debo','debe','informal')) {
         const p = calcPersonal();
         const totalDeudas = p.prest + p.inf;
@@ -462,21 +429,18 @@ function buildOfflineResponse(message, ctx) {
         return `💳 DEUDAS Y COMPROMISOS\n• Préstamos formales:   ${fmt(p.prest)}\n• Deudas informales:    ${fmt(p.inf)}\n────────────────────────\n• Total comprometido:   ${fmt(totalDeudas)}\n• vs. saldo bancario:   ${pctDeuda}%\n• Meses para saldarlas: ${mesesPago}\n\n${estadoDeuda}\n${totalDeudas > 0 && p.disp > 0 ? `💡 Con tu disponible actual de ${fmt(p.disp)}/mes, podrías saldar todas tus deudas en aprox. ${mesesPago} meses.` : ''}`;
     }
 
-    // ── Personal: Bancos / Saldo ───────────────────────────────────
     if (has('banco','bancos','cuenta','saldo','efectivo','dinero en banco','liquidez')) {
         const p = calcPersonal();
         const pctVsDeudas = p.banc > 0 && (p.prest + p.inf) > 0 ? ((p.prest + p.inf) / p.banc * 100).toFixed(1) : '0.0';
         return `🏦 SALDO BANCARIO\n• Dinero en cuentas:    ${fmt(p.banc)}\n• Deudas totales:       ${fmt(p.prest + p.inf)}\n• Liquidez neta:        ${fmt(p.banc - p.prest - p.inf)}\n• Deuda vs Banco:       ${pctVsDeudas}%\n\n${p.banc > (p.prest + p.inf) ? '✅ Tus activos bancarios superan tus deudas.' : '⚠️ Tus deudas superan tu saldo bancario.'}`;
     }
 
-    // ── Personal: Patrimonio neto ──────────────────────────────────
     if (has('patrimonio','neto','riqueza','capital','vale','valgo')) {
         const p = calcPersonal();
         const estado = p.patr >= 0 ? '✅ Patrimonio positivo' : '🚨 Patrimonio negativo (deudas > activos)';
         return `🏆 PATRIMONIO NETO\n• Saldo bancario:       ${fmt(p.banc)}\n• Ahorros:              ${fmt(p.aho)}\n• (-) Préstamos:        ${fmt(p.prest)}\n• (-) Deudas informales:${fmt(p.inf)}\n────────────────────────\n• Patrimonio neto:      ${fmt(p.patr)}\n\n${estado}\n💡 El patrimonio neto mide cuánto tienes realmente libre después de todas las deudas.`;
     }
 
-    // ── Salario / Ingresos ─────────────────────────────────────────
     if (has('salario','sueldo','ingreso mensual','gano','cobro mensual')) {
         const p = calcPersonal();
         const pctGast = p.sal > 0 ? (p.gast / p.sal * 100).toFixed(1) : '0.0';
@@ -484,7 +448,6 @@ function buildOfflineResponse(message, ctx) {
         return `💵 INGRESOS MENSUALES\n• Total ingresos:       ${fmt(p.sal)}\n• Gastos fijos:         ${fmt(p.gast)} (${pctGast}%)\n• Ahorros:              ${fmt(p.aho)} (${pctAho}%)\n• Disponible:           ${fmt(p.disp)}\n\n${p.gast > p.sal * 0.7 ? '⚠️ Tus gastos fijos superan el 70% de tus ingresos. Zona de riesgo.' : '✅ Buena distribución de ingresos.'}`;
     }
 
-    // ── Resumen general ────────────────────────────────────────────
     if (has('resumen','general','todo','panorama','como estoy','cómo estoy','situacion','situación','status')) {
         const p = calcPersonal();
         const e = calcEffi();
@@ -501,7 +464,6 @@ function buildOfflineResponse(message, ctx) {
         return resp;
     }
 
-    // ── Alertas / Riesgos ──────────────────────────────────────────
     if (has('alerta','riesgo','problema','mal','crisis','preocup','peligro','warn')) {
         const p = calcPersonal();
         const e = calcEffi();
@@ -526,7 +488,6 @@ function buildOfflineResponse(message, ctx) {
         return `🔍 ALERTAS DETECTADAS (${alertas.length})\n\n${alertas.join('\n')}\n\n💡 Escríbeme sobre cualquiera de estos puntos para un análisis más detallado.`;
     }
 
-    // ── ¿Estoy bien? ───────────────────────────────────────────────
     if (has('bien','mal','como voy','cómo voy','como va','que tal','qué tal','analiza')) {
         const p = calcPersonal();
         const e = calcEffi();
@@ -556,17 +517,14 @@ function buildOfflineResponse(message, ctx) {
         return `📈 DIAGNÓSTICO FINANCIERO\n${calif}\n\n${puntos.join('\n')}\n\nPuntuación: ${score}/${total} indicadores positivos\n\n💡 Escríbeme "alertas" para ver los riesgos específicos o "resumen" para el detalle completo.`;
     }
 
-    // ── Publicidad / Ads ───────────────────────────────────────────
     if (has('publicidad','ads','facebook','tiktok','marketing','pauta','anuncio')) {
         return `📢 PUBLICIDAD\nLos datos de publicidad (Facebook Ads / TikTok Ads) se cargan desde la pestaña "Cargar Archivo".\n\nUna vez cargados, el dashboard calcula automáticamente:\n• Gasto en USD convertido a RD$\n• Costo por orden\n• Impacto en ganancia neta\n\n¿Ya cargaste tus reportes de publicidad?`;
     }
 
-    // ── Comparación / Período ──────────────────────────────────────
     if (has('compara','anterior','mes pasado','periodo','período','historico','histórico')) {
         return `📅 COMPARACIÓN DE PERÍODOS\nActualmente trabajo con el período del reporte cargado.\n\nPara comparar períodos:\n1. Usa "Historial de Cuadres" en el menú lateral\n2. Registra el cobro de ganancias de cada período\n3. El historial acumula los registros para seguimiento\n\n¿Quieres que analice el período actual en detalle?`;
     }
 
-    // ── Recomendaciones ────────────────────────────────────────────
     if (has('recomien','consejo','que hago','que debo','mejora','optimiza','suger')) {
         const p = calcPersonal();
         const e = calcEffi();
@@ -585,18 +543,41 @@ function buildOfflineResponse(message, ctx) {
         return `💡 RECOMENDACIONES PERSONALIZADAS\n\n${recs.map((r,i) => `${i+1}. ${r}`).join('\n\n')}`;
     }
 
-    // ── Gracias / Despedida ────────────────────────────────────────
     if (has('gracias','thank','perfecto','excelente','listo','ok','entendi','entendí')) {
         return `¡Con gusto! 😊 Recuerda que puedo ayudarte en cualquier momento con el análisis de tus finanzas.\n\nEscríbeme "ayuda" para ver todo lo que puedo hacer por ti.`;
     }
 
-    // ── Fallback inteligente ───────────────────────────────────────
     const tieneEffi = !!effi;
     const tieneTr   = !!tr;
     const tieneFp   = fp.salarios > 0;
     const datosDisp = [tieneEffi && 'Effi', tieneTr && 'Transporte', tieneFp && 'Finanzas Personales'].filter(Boolean);
 
     return `No entendí exactamente tu consulta, pero tengo acceso a: ${datosDisp.length > 0 ? datosDisp.join(', ') : 'datos aún no cargados'}.\n\nPuedes preguntarme sobre:\n• "ganancia" — rentabilidad del negocio\n• "guías" — estado de órdenes\n• "disponible" — flujo personal\n• "deudas" — préstamos\n• "alertas" — riesgos detectados\n• "resumen" — panorama completo\n• "ayuda" — todas las opciones`;
+}
+
+/* ── MONGODB ──────────────────────────────────────────────────────────── */
+async function connectMongo() {
+    if (!MONGODB_URI) {
+        console.error('❌ MONGODB_URI no configurada');
+        process.exit(1);
+    }
+    await mongoose.connect(MONGODB_URI, {
+        dbName: 'finanzas_pro',
+        serverSelectionTimeoutMS: 10000,
+        socketTimeoutMS: 45000,
+    });
+    console.log('✅ MongoDB conectado (finanzas_pro)');
+
+    const db = mongoose.connection;
+    await db.collection('users').createIndex({ username: 1 }, { unique: true });
+    await db.collection('app_state').createIndex({ userId: 1 }, { unique: true });
+
+    await ensureAdminUser();
+    return db;
+}
+
+function getDb() {
+    return mongoose.connection;
 }
 
 /* ── AUTENTICACIÓN ──────────────────────────────────────────────────── */
@@ -606,20 +587,27 @@ app.post('/api/register', async (req, res) => {
     if (!username || !password) return res.status(400).json({ success: false, message: 'Usuario y contraseña requeridos' });
 
     try {
+        const existing = await getDb().collection('users').findOne({ username });
+        if (existing) return res.status(400).json({ success: false, message: 'Usuario ya existe' });
+
         const hashedPassword = await bcrypt.hash(password, saltRounds);
-        
-        db.get('SELECT id FROM users WHERE username = ?', [username], (err, row) => {
-            if (err)  return res.status(500).json({ success: false, message: 'Error interno' });
-            if (row)  return res.status(400).json({ success: false, message: 'Usuario ya existe' });
-            db.run('INSERT INTO users (username, password, is_admin) VALUES (?, ?, 0)', [username, hashedPassword], function(e2) {
-                if (e2) return res.status(500).json({ success: false, message: 'Error al crear usuario' });
-                console.log(`✅ Nuevo usuario: ${username}`);
-                res.json({ success: true, message: 'Usuario registrado', userId: this.lastID });
-            });
+        const result = await getDb().collection('users').insertOne({
+            username,
+            password: hashedPassword,
+            is_admin: false,
+            full_name: '',
+            phone: '',
+            notes: '',
+            suspended: false,
+            suspended_reason: '',
+            created_at: new Date()
         });
-    } catch (hashError) {
-        console.error('❌ Error hashing password:', hashError);
-        return res.status(500).json({ success: false, message: 'Error interno del servidor' });
+
+        console.log(`✅ Nuevo usuario: ${username}`);
+        res.json({ success: true, message: 'Usuario registrado', userId: result.insertedId.toString() });
+    } catch (err) {
+        console.error('❌ Error register:', err.message);
+        res.status(500).json({ success: false, message: 'Error interno del servidor' });
     }
 });
 
@@ -628,63 +616,75 @@ app.post('/api/login', async (req, res) => {
     const password = String(req.body.password || '');
     if (!username || !password) return res.status(400).json({ success: false, message: 'Usuario y contraseña requeridos' });
 
-    db.get('SELECT * FROM users WHERE username = ?', [username], async (err, user) => {
-        if (err) return res.status(500).json({ success: false, message: 'Error interno' });
+    try {
+        const user = await getDb().collection('users').findOne({ username });
+
         if (user) {
-            if (Number(user.suspended || 0) === 1) {
+            if (user.suspended) {
                 const reason = String(user.suspended_reason || '').trim();
                 const msg = reason
                     ? `Cuenta suspendida. Motivo: ${reason}`
                     : 'Tu cuenta está suspendida. Contacta al administrador.';
                 return res.status(403).json({ success: false, message: msg });
             }
-            // Compare hashed password
+
             const passwordMatch = await bcrypt.compare(password, user.password);
             if (passwordMatch) {
                 console.log(`✅ Login: ${username}`);
-                return res.json({ success: true, token: `session_token_pro_2026_${user.id}`, user: { id: user.id, username: user.username, is_admin: !!user.is_admin } });
+                return res.json({
+                    success: true,
+                    token: `session_token_pro_2026_${user._id.toString()}`,
+                    user: { id: user._id.toString(), username: user.username, is_admin: !!user.is_admin }
+                });
             }
         }
-        // Fallback to admin check (.env password preferred, legacy hash supported)
+
         if (username === ADMIN_USERNAME) {
             const adminMatch = ADMIN_PASSWORD
                 ? password === ADMIN_PASSWORD
                 : await bcrypt.compare(password, ADMIN_PASSWORD_HASH);
             if (adminMatch) {
-                ensureAdminUser();
-                return res.json({ success: true, token: `session_token_pro_2026_${ADMIN_USERNAME}`, user: { id: 'admin', username: ADMIN_USERNAME, is_admin: true } });
+                await ensureAdminUser();
+                const adminUser = await getDb().collection('users').findOne({ username: ADMIN_USERNAME });
+                const adminId = adminUser ? adminUser._id.toString() : ADMIN_USERNAME;
+                return res.json({
+                    success: true,
+                    token: `session_token_pro_2026_${ADMIN_USERNAME}`,
+                    user: { id: adminId, username: ADMIN_USERNAME, is_admin: true }
+                });
             }
         }
-        res.status(401).json({ success: false, message: 'Credenciales incorrectas' });
-    });
-});
 
-/* ── BASE DE DATOS ──────────────────────────────────────────────────── */
-const db = new sqlite3.Database(DB_PATH, (err) => {
-    if (err) { console.error('❌ SQLite:', err); return; }
-    console.log('✅ SQLite conectado en', DB_PATH);
-    db.run(`CREATE TABLE IF NOT EXISTS app_state (id INTEGER PRIMARY KEY, key TEXT UNIQUE, value TEXT)`);
-    db.run(`CREATE TABLE IF NOT EXISTS users (id INTEGER PRIMARY KEY AUTOINCREMENT, username TEXT UNIQUE NOT NULL, password TEXT NOT NULL, is_admin BOOLEAN DEFAULT 0, created_at DATETIME DEFAULT CURRENT_TIMESTAMP)`, (e) => {
-        if (!e) {
-            ensureUsersSchema();
-            ensureAdminUser();
-        }
-    });
+        res.status(401).json({ success: false, message: 'Credenciales incorrectas' });
+    } catch (err) {
+        console.error('❌ Error login:', err.message);
+        res.status(500).json({ success: false, message: 'Error interno' });
+    }
 });
 
 async function ensureAdminUser() {
     try {
+        const existing = await getDb().collection('users').findOne({ username: ADMIN_USERNAME });
+        if (existing) return;
+
         const adminPasswordHash = ADMIN_PASSWORD
             ? await bcrypt.hash(ADMIN_PASSWORD, saltRounds)
             : ADMIN_PASSWORD_HASH;
-        db.get('SELECT id FROM users WHERE username = ?', [ADMIN_USERNAME], (err, row) => {
-            if (err || row) { if (row) adminUserId = row.id; return; }
-            db.run('INSERT INTO users (username, password, is_admin) VALUES (?, ?, 1)', [ADMIN_USERNAME, adminPasswordHash], function(e2) {
-                if (!e2) { adminUserId = this.lastID; console.log('✅ Admin creado'); }
-            });
+
+        await getDb().collection('users').insertOne({
+            username: ADMIN_USERNAME,
+            password: adminPasswordHash,
+            is_admin: true,
+            full_name: '',
+            phone: '',
+            notes: '',
+            suspended: false,
+            suspended_reason: '',
+            created_at: new Date()
         });
-    } catch (hashError) {
-        console.error('❌ Error hashing admin password:', hashError);
+        console.log('✅ Admin creado en MongoDB');
+    } catch (err) {
+        console.error('❌ Error ensureAdminUser:', err.message);
     }
 }
 
@@ -695,78 +695,68 @@ function sanitizeUserId(v) {
 }
 function getStateKey(userId) {
     const c = sanitizeUserId(userId);
-    return (!c || c === 'shared') ? 'current_state' : `state_${c}`;
+    return (!c || c === 'shared') ? 'shared' : c;
 }
-function isAdmin(userId) {
+async function isAdmin(userId) {
     if (!userId) return false;
-    if (String(userId) === 'admin' || String(userId) === ADMIN_USERNAME) return true;
-    return !!(adminUserId && Number(userId) === Number(adminUserId));
+    if (String(userId) === ADMIN_USERNAME) return true;
+    try {
+        const user = await getDb().collection('users').findOne(
+            { $or: [{ _id: new mongoose.Types.ObjectId(userId) }, { username: userId }] },
+            { projection: { is_admin: 1 } }
+        );
+        return !!user?.is_admin;
+    } catch { return false; }
 }
 
 function requireAdmin(req, res, next) {
-    if (!isAdmin(req.userId)) {
-        return res.status(403).json({ success: false, message: 'Acceso solo para administradores' });
-    }
-    next();
+    isAdmin(req.userId).then(admin => {
+        if (!admin) return res.status(403).json({ success: false, message: 'Acceso solo para administradores' });
+        next();
+    });
 }
 
-function ensureUsersSchema() {
-    const requiredColumns = [
-        { name: 'full_name', ddl: 'ALTER TABLE users ADD COLUMN full_name TEXT DEFAULT ""' },
-        { name: 'phone', ddl: 'ALTER TABLE users ADD COLUMN phone TEXT DEFAULT ""' },
-        { name: 'notes', ddl: 'ALTER TABLE users ADD COLUMN notes TEXT DEFAULT ""' },
-        { name: 'suspended', ddl: 'ALTER TABLE users ADD COLUMN suspended INTEGER DEFAULT 0' },
-        { name: 'suspended_reason', ddl: 'ALTER TABLE users ADD COLUMN suspended_reason TEXT DEFAULT ""' }
-    ];
+/* ── STATE ──────────────────────────────────────────────────────────── */
+app.post('/api/state', authenticateToken, async (req, res) => {
+    const userId = getStateKey(req.query.userId);
+    const state = req.body || {};
+    const admin = await isAdmin(req.query.userId);
 
-    db.all('PRAGMA table_info(users)', (err, columns) => {
-        if (err || !Array.isArray(columns)) {
-            console.error('❌ Error leyendo schema users:', err?.message || 'unknown');
-            return;
+    try {
+        await getDb().collection('app_state').updateOne(
+            { userId },
+            { $set: { userId, data: state, updatedAt: new Date() } },
+            { upsert: true }
+        );
+        if (admin && userId !== 'shared') {
+            await getDb().collection('app_state').updateOne(
+                { userId: 'shared' },
+                { $set: { userId: 'shared', data: state, updatedAt: new Date() } },
+                { upsert: true }
+            );
         }
-        const existing = new Set(columns.map(col => col.name));
-        requiredColumns.forEach(col => {
-            if (!existing.has(col.name)) {
-                db.run(col.ddl, (alterErr) => {
-                    if (alterErr) {
-                        console.error(`❌ Error agregando columna ${col.name}:`, alterErr.message);
-                    } else {
-                        console.log(`✅ Columna users.${col.name} creada`);
-                    }
-                });
-            }
-        });
-    });
-}
-
-app.post('/api/state', authenticateToken, (req, res) => {
-    const key    = getStateKey(req.query.userId);
-    const state  = JSON.stringify(req.body || {});
-    const mirror = isAdmin(req.query.userId) && key !== 'current_state';
-    db.run('INSERT OR REPLACE INTO app_state (key, value) VALUES (?, ?)', [key, state], (err) => {
-        if (err) return res.status(500).json({ error: err.message });
-        if (mirror) db.run('INSERT OR REPLACE INTO app_state (key, value) VALUES (?, ?)', ['current_state', state], () => {});
-        console.log(`💾 Estado: ${key}`);
+        console.log(`💾 Estado guardado: ${userId}`);
         res.json({ success: true });
-    });
+    } catch (err) {
+        console.error('❌ Error saving state:', err.message);
+        res.status(500).json({ error: err.message });
+    }
 });
 
-app.get('/api/state', authenticateToken, (req, res) => {
-    const key       = getStateKey(req.query.userId);
-    const adminUser = isAdmin(req.query.userId);
-    const parse = (row) => {
-        if (!row || !row.value) return res.json(null);
-        try { res.json(JSON.parse(row.value)); } catch (_) { res.status(500).json({ error: 'Estado corrupto' }); }
-    };
-    db.get('SELECT value FROM app_state WHERE key = ?', [key], (err, row) => {
-        if (err) return res.status(500).json({ error: err.message });
-        if (row) return parse(row);
-        if (adminUser && key !== 'current_state') {
-            db.get('SELECT value FROM app_state WHERE key = ?', ['current_state'], (_e, lr) => parse(lr || null));
-        } else {
-            res.json(null);
+app.get('/api/state', authenticateToken, async (req, res) => {
+    const userId = getStateKey(req.query.userId);
+    const admin = await isAdmin(req.query.userId);
+
+    try {
+        let doc = await getDb().collection('app_state').findOne({ userId });
+        if (!doc && admin && userId !== 'shared') {
+            doc = await getDb().collection('app_state').findOne({ userId: 'shared' });
         }
-    });
+        res.json(doc?.data || null);
+    } catch (err) {
+        console.error('❌ Error loading state:', err.message);
+        res.status(500).json({ error: err.message });
+    }
 });
 
 /* ── ARCHIVOS ───────────────────────────────────────────────────────── */
@@ -774,9 +764,7 @@ const storage = multer.diskStorage({
     destination: UPLOADS_DIR,
     filename: (_req, file, cb) => {
         let safeName = file.originalname || 'upload.bin';
-        // Convertir posibles problemas de codificación de UTF-8 leídos como latin1
         try { safeName = Buffer.from(safeName, 'latin1').toString('utf8'); } catch(e){}
-        // Remover acentos y dejar solo caracteres seguros para URLs y Windows
         safeName = safeName.normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-zA-Z0-9.-]/g, '_');
         cb(null, Date.now() + '-' + safeName);
     }
@@ -789,7 +777,6 @@ app.post('/api/upload', authenticateToken, upload.single('file'), (req, res) => 
     res.json({ message: 'Archivo guardado', filename: req.file.filename });
 });
 
-// Listar archivos subidos — usado por autoLoadFile del cliente
 app.get('/api/files/list', authenticateToken, (req, res) => {
     try {
         const files = fs.readdirSync(UPLOADS_DIR).map(name => {
@@ -804,201 +791,189 @@ app.get('/api/files/list', authenticateToken, (req, res) => {
 });
 
 /* ── ADMIN: CLIENTES ──────────────────────────────────────────────── */
-app.get('/api/admin/clients', authenticateToken, requireAdmin, (_req, res) => {
-    const sql = `
-        SELECT
-            id,
-            username,
-            is_admin,
-            created_at,
-            COALESCE(full_name, '') AS full_name,
-            COALESCE(phone, '') AS phone,
-            COALESCE(notes, '') AS notes,
-            COALESCE(suspended, 0) AS suspended,
-            COALESCE(suspended_reason, '') AS suspended_reason
-        FROM users
-        ORDER BY datetime(created_at) DESC, id DESC
-    `;
-
-    db.all(sql, [], (err, rows) => {
-        if (err) return res.status(500).json({ success: false, message: 'Error cargando clientes' });
-        res.json({ success: true, clients: rows || [] });
-    });
+app.get('/api/admin/clients', authenticateToken, requireAdmin, async (_req, res) => {
+    try {
+        const clients = await getDb().collection('users').find().sort({ created_at: -1 }).toArray();
+        res.json({
+            success: true,
+            clients: clients.map(u => ({
+                id: u._id.toString(),
+                username: u.username,
+                is_admin: u.is_admin ? 1 : 0,
+                created_at: u.created_at,
+                full_name: u.full_name || '',
+                phone: u.phone || '',
+                notes: u.notes || '',
+                suspended: u.suspended ? 1 : 0,
+                suspended_reason: u.suspended_reason || ''
+            }))
+        });
+    } catch (err) {
+        console.error('❌ Error loading clients:', err.message);
+        res.status(500).json({ success: false, message: 'Error cargando clientes' });
+    }
 });
 
-app.get('/api/admin/clients/:id', authenticateToken, requireAdmin, (req, res) => {
-    const id = Number(req.params.id);
-    if (!Number.isInteger(id) || id <= 0) {
-        return res.status(400).json({ success: false, message: 'ID inválido' });
+app.get('/api/admin/clients/:id', authenticateToken, requireAdmin, async (req, res) => {
+    try {
+        const _id = new mongoose.Types.ObjectId(req.params.id);
+        const user = await getDb().collection('users').findOne({ _id });
+        if (!user) return res.status(404).json({ success: false, message: 'Cliente no encontrado' });
+        res.json({
+            success: true,
+            client: {
+                id: user._id.toString(),
+                username: user.username,
+                is_admin: user.is_admin ? 1 : 0,
+                created_at: user.created_at,
+                full_name: user.full_name || '',
+                phone: user.phone || '',
+                notes: user.notes || '',
+                suspended: user.suspended ? 1 : 0,
+                suspended_reason: user.suspended_reason || ''
+            }
+        });
+    } catch (err) {
+        console.error('❌ Error loading client:', err.message);
+        res.status(500).json({ success: false, message: 'Error cargando cliente' });
     }
-
-    const sql = `
-        SELECT
-            id,
-            username,
-            is_admin,
-            created_at,
-            COALESCE(full_name, '') AS full_name,
-            COALESCE(phone, '') AS phone,
-            COALESCE(notes, '') AS notes,
-            COALESCE(suspended, 0) AS suspended,
-            COALESCE(suspended_reason, '') AS suspended_reason
-        FROM users
-        WHERE id = ?
-        LIMIT 1
-    `;
-
-    db.get(sql, [id], (err, row) => {
-        if (err) return res.status(500).json({ success: false, message: 'Error cargando cliente' });
-        if (!row) return res.status(404).json({ success: false, message: 'Cliente no encontrado' });
-        res.json({ success: true, client: row });
-    });
 });
 
-app.put('/api/admin/clients/:id', authenticateToken, requireAdmin, (req, res) => {
-    const id = Number(req.params.id);
-    if (!Number.isInteger(id) || id <= 0) {
-        return res.status(400).json({ success: false, message: 'ID inválido' });
-    }
-
-    db.get('SELECT * FROM users WHERE id = ?', [id], (findErr, current) => {
-        if (findErr) return res.status(500).json({ success: false, message: 'Error interno' });
+app.put('/api/admin/clients/:id', authenticateToken, requireAdmin, async (req, res) => {
+    try {
+        const _id = new mongoose.Types.ObjectId(req.params.id);
+        const current = await getDb().collection('users').findOne({ _id });
         if (!current) return res.status(404).json({ success: false, message: 'Cliente no encontrado' });
 
         const username = String(req.body.username || current.username).trim().toLowerCase();
         const fullName = String(req.body.full_name || '').trim();
         const phone = String(req.body.phone || '').trim();
         const notes = String(req.body.notes || '').trim();
-        const suspended = Number(req.body.suspended) === 1 ? 1 : 0;
+        const suspended = req.body.suspended === 1 || req.body.suspended === true;
         const suspendedReason = String(req.body.suspended_reason || '').trim();
 
-        if (!username) {
-            return res.status(400).json({ success: false, message: 'El usuario es obligatorio' });
-        }
+        if (!username) return res.status(400).json({ success: false, message: 'El usuario es obligatorio' });
+        if (current.is_admin && suspended) return res.status(400).json({ success: false, message: 'No se puede suspender una cuenta administradora' });
 
-        if (Number(current.is_admin || 0) === 1 && suspended === 1) {
-            return res.status(400).json({ success: false, message: 'No se puede suspender una cuenta administradora' });
-        }
+        const dup = await getDb().collection('users').findOne({ username, _id: { $ne: _id } });
+        if (dup) return res.status(400).json({ success: false, message: 'Ese usuario ya está en uso' });
 
-        const checkSql = 'SELECT id FROM users WHERE username = ? AND id != ? LIMIT 1';
-        db.get(checkSql, [username, id], (dupErr, dupRow) => {
-            if (dupErr) return res.status(500).json({ success: false, message: 'Error validando usuario' });
-            if (dupRow) return res.status(400).json({ success: false, message: 'Ese usuario ya está en uso' });
-
-            const updateSql = `
-                UPDATE users
-                SET
-                    username = ?,
-                    full_name = ?,
-                    phone = ?,
-                    notes = ?,
-                    suspended = ?,
-                    suspended_reason = ?
-                WHERE id = ?
-            `;
-            const updateParams = [username, fullName, phone, notes, suspended, suspendedReason, id];
-
-            db.run(updateSql, updateParams, function(updateErr) {
-                if (updateErr) return res.status(500).json({ success: false, message: 'No se pudo actualizar el cliente' });
-                if (!this.changes) return res.status(404).json({ success: false, message: 'Cliente no encontrado' });
-
-                db.get(
-                    `SELECT id, username, is_admin, created_at, COALESCE(full_name, '') AS full_name, COALESCE(phone, '') AS phone, COALESCE(notes, '') AS notes, COALESCE(suspended, 0) AS suspended, COALESCE(suspended_reason, '') AS suspended_reason FROM users WHERE id = ?`,
-                    [id],
-                    (_e2, updatedRow) => res.json({ success: true, message: 'Cliente actualizado', client: updatedRow || null })
-                );
-            });
-        });
-    });
-});
-
-app.patch('/api/admin/clients/:id/suspend', authenticateToken, requireAdmin, (req, res) => {
-    const id = Number(req.params.id);
-    if (!Number.isInteger(id) || id <= 0) {
-        return res.status(400).json({ success: false, message: 'ID inválido' });
-    }
-
-    const suspended = Number(req.body.suspended) === 1 ? 1 : 0;
-    const reason = String(req.body.reason || req.body.suspended_reason || '').trim();
-
-    db.get('SELECT id, is_admin FROM users WHERE id = ? LIMIT 1', [id], (err, user) => {
-        if (err) return res.status(500).json({ success: false, message: 'Error interno' });
-        if (!user) return res.status(404).json({ success: false, message: 'Cliente no encontrado' });
-        if (Number(user.is_admin || 0) === 1 && suspended === 1) {
-            return res.status(400).json({ success: false, message: 'No se puede suspender una cuenta administradora' });
-        }
-
-        db.run(
-            'UPDATE users SET suspended = ?, suspended_reason = ? WHERE id = ?',
-            [suspended, suspended ? reason : '', id],
-            function(updateErr) {
-                if (updateErr) return res.status(500).json({ success: false, message: 'No se pudo actualizar el estado' });
-                res.json({ success: true, message: suspended ? 'Cliente suspendido' : 'Cliente reactivado' });
-            }
+        await getDb().collection('users').updateOne(
+            { _id },
+            { $set: { username, full_name: fullName, phone, notes, suspended, suspended_reason: suspended ? suspendedReason : '' } }
         );
-    });
-});
 
-app.delete('/api/admin/clients/:id', authenticateToken, requireAdmin, (req, res) => {
-    const id = Number(req.params.id);
-    if (!Number.isInteger(id) || id <= 0) {
-        return res.status(400).json({ success: false, message: 'ID inválido' });
-    }
-
-    db.get('SELECT id, is_admin FROM users WHERE id = ? LIMIT 1', [id], (findErr, row) => {
-        if (findErr) return res.status(500).json({ success: false, message: 'Error interno' });
-        if (!row) return res.status(404).json({ success: false, message: 'Cliente no encontrado' });
-        if (Number(row.is_admin || 0) === 1) {
-            return res.status(400).json({ success: false, message: 'No se puede eliminar una cuenta administradora' });
-        }
-
-        db.run('DELETE FROM users WHERE id = ?', [id], function(deleteErr) {
-            if (deleteErr) return res.status(500).json({ success: false, message: 'No se pudo eliminar el cliente' });
-            if (!this.changes) return res.status(404).json({ success: false, message: 'Cliente no encontrado' });
-            res.json({ success: true, message: 'Cliente eliminado' });
+        const updated = await getDb().collection('users').findOne({ _id });
+        res.json({
+            success: true,
+            message: 'Cliente actualizado',
+            client: {
+                id: updated._id.toString(),
+                username: updated.username,
+                is_admin: updated.is_admin ? 1 : 0,
+                created_at: updated.created_at,
+                full_name: updated.full_name || '',
+                phone: updated.phone || '',
+                notes: updated.notes || '',
+                suspended: updated.suspended ? 1 : 0,
+                suspended_reason: updated.suspended_reason || ''
+            }
         });
-    });
+    } catch (err) {
+        console.error('❌ Error updating client:', err.message);
+        res.status(500).json({ success: false, message: 'Error actualizando cliente' });
+    }
 });
+
+const suspendClientHandler = async (req, res) => {
+    try {
+        const _id = new mongoose.Types.ObjectId(req.params.id);
+        const suspended = req.body.suspended === 1 || req.body.suspended === true;
+        const reason = String(req.body.reason || req.body.suspended_reason || '').trim();
+
+        const user = await getDb().collection('users').findOne({ _id });
+        if (!user) return res.status(404).json({ success: false, message: 'Cliente no encontrado' });
+        if (user.is_admin && suspended) return res.status(400).json({ success: false, message: 'No se puede suspender una cuenta administradora' });
+
+        await getDb().collection('users').updateOne(
+            { _id },
+            { $set: { suspended, suspended_reason: suspended ? reason : '' } }
+        );
+        res.json({ success: true, message: suspended ? 'Cliente suspendido' : 'Cliente reactivado' });
+    } catch (err) {
+        console.error('❌ Error suspend client:', err.message);
+        res.status(500).json({ success: false, message: 'Error actualizando estado' });
+    }
+};
+
+app.patch('/api/admin/clients/:id/suspend', authenticateToken, requireAdmin, suspendClientHandler);
+app.post('/api/admin/clients/:id/suspend', authenticateToken, requireAdmin, suspendClientHandler);
+
+const deleteClientHandler = async (req, res) => {
+    try {
+        const _id = new mongoose.Types.ObjectId(req.params.id);
+        const user = await getDb().collection('users').findOne({ _id });
+        if (!user) return res.status(404).json({ success: false, message: 'Cliente no encontrado' });
+        if (user.is_admin) return res.status(400).json({ success: false, message: 'No se puede eliminar una cuenta administradora' });
+
+        await getDb().collection('users').deleteOne({ _id });
+        res.json({ success: true, message: 'Cliente eliminado' });
+    } catch (err) {
+        console.error('❌ Error deleting client:', err.message);
+        res.status(500).json({ success: false, message: 'Error eliminando cliente' });
+    }
+};
+
+app.delete('/api/admin/clients/:id', authenticateToken, requireAdmin, deleteClientHandler);
+app.post('/api/admin/clients/:id/delete', authenticateToken, requireAdmin, deleteClientHandler);
 
 /* ── START ──────────────────────────────────────────────────────────── */
-app.listen(PORT, () => {
-    console.log(`🚀 Finanzas Pro corriendo en puerto ${PORT}`);
+async function start() {
+    await connectMongo();
 
-    // ── Diagnóstico automático de IA al arrancar ───────────────────
-    const gKey = process.env.GOOGLE_AI_KEY;
-    const oKey = process.env.OPENAI_API_KEY;
-    const aKey = process.env.ANTHROPIC_API_KEY;
+    app.listen(PORT, () => {
+        console.log(`🚀 Finanzas Pro corriendo en puerto ${PORT}`);
 
-    console.log('─── DIAGNÓSTICO DE IA ────────────────────────────────');
-    console.log('GOOGLE_AI_KEY  :', gKey  ? `presente (${gKey.slice(0,8)}...)` : '❌ NO DEFINIDA');
-    console.log('OPENAI_API_KEY :', oKey  && !oKey.includes('your_') ? `presente (${oKey.slice(0,8)}...)` : '❌ no configurada');
-    console.log('ANTHROPIC_KEY  :', aKey  && !aKey.includes('your_') ? `presente (${aKey.slice(0,8)}...)` : '❌ no configurada');
+        const gKey = process.env.GOOGLE_AI_KEY;
+        const oKey = process.env.OPENAI_API_KEY;
+        const aKey = process.env.ANTHROPIC_API_KEY;
 
-    if (gKey) {
-        fetch(
-            `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${gKey}`,
-            {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    contents: [{ role: 'user', parts: [{ text: 'hola' }] }],
-                    generationConfig: { maxOutputTokens: 10 }
-                })
-            }
-        )
-        .then(async r => {
-            const body = await r.json();
-            if (r.ok) {
-                const reply = body?.candidates?.[0]?.content?.parts?.[0]?.text || '(sin texto)';
-                console.log('✅ GEMINI OK — respuesta de prueba:', reply.trim());
-            } else {
-                console.error(`❌ GEMINI ERROR ${r.status}: ${body?.error?.message || JSON.stringify(body).slice(0,300)}`);
-                console.error('💡 Verifica que la clave empiece con AIza y tenga la API "Generative Language" habilitada en Google Cloud.');
-            }
-        })
-        .catch(e => console.error('❌ GEMINI fetch error:', e.message));
-    } else {
-        console.warn('⚠️  Sin GOOGLE_AI_KEY — el bot usará modo offline.');
-    }
-    console.log('─────────────────────────────────────────────────────');
+        console.log('─── DIAGNÓSTICO DE IA ────────────────────────────────');
+        console.log('GOOGLE_AI_KEY  :', gKey  ? `presente (${gKey.slice(0,8)}...)` : '❌ NO DEFINIDA');
+        console.log('OPENAI_API_KEY :', oKey  && !oKey.includes('your_') ? `presente (${oKey.slice(0,8)}...)` : '❌ no configurada');
+        console.log('ANTHROPIC_KEY  :', aKey  && !aKey.includes('your_') ? `presente (${aKey.slice(0,8)}...)` : '❌ no configurada');
+
+        if (gKey) {
+            fetch(
+                `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${gKey}`,
+                {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        contents: [{ role: 'user', parts: [{ text: 'hola' }] }],
+                        generationConfig: { maxOutputTokens: 10 }
+                    })
+                }
+            )
+            .then(async r => {
+                const body = await r.json();
+                if (r.ok) {
+                    const reply = body?.candidates?.[0]?.content?.parts?.[0]?.text || '(sin texto)';
+                    console.log('✅ GEMINI OK — respuesta de prueba:', reply.trim());
+                } else {
+                    console.error(`❌ GEMINI ERROR ${r.status}: ${body?.error?.message || JSON.stringify(body).slice(0,300)}`);
+                    console.error('💡 Verifica que la clave empiece con AIza y tenga la API "Generative Language" habilitada en Google Cloud.');
+                }
+            })
+            .catch(e => console.error('❌ GEMINI fetch error:', e.message));
+        } else {
+            console.warn('⚠️  Sin GOOGLE_AI_KEY — el bot usará modo offline.');
+        }
+        console.log('─────────────────────────────────────────────────────');
+    });
+}
+
+start().catch(err => {
+    console.error('❌ Error fatal:', err);
+    process.exit(1);
 });
