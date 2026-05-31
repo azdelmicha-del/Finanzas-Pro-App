@@ -7,11 +7,6 @@ services:
     startCommand: npm start
     healthCheckPath: /healthz
     autoDeploy: true
-    # ⚠️ DISK TEMPORAL - Eliminar después de migrar a MongoDB
-    disks:
-      - name: finanzas-data
-        mountPath: /data
-        sizeGB: 1
     envVars:
       - key: NODE_VERSION
         value: "20"
