@@ -3361,13 +3361,24 @@
                         <input id="egresoMonto" type="number" step="0.01" placeholder="0.00" class="premium-input premium-input-number" required>
                     </div>
                 </div>
-                <div class="premium-form-group full-width">
-                    <label for="egresoDesc">Descripción del egreso</label>
-                    <input id="egresoDesc" type="text" placeholder="Describe el egreso..." class="premium-input" required>
+                <div class="premium-form-row">
+                    <div class="premium-form-group full-width" style="flex: 2;">
+                        <label for="egresoDesc">Descripción del egreso</label>
+                        <input id="egresoDesc" type="text" placeholder="Describe el egreso..." class="premium-input" required>
+                    </div>
+                    <div class="premium-form-group" style="flex: 1;">
+                        <label for="egresoFecha">Fecha</label>
+                        <input id="egresoFecha" type="date" class="premium-input">
+                    </div>
                 </div>
-                <button type="submit" class="premium-btn-primary" id="egresoSubmitBtn">
-                    <i class="fa-solid fa-plus"></i> Agregar Egreso
-                </button>
+                <div style="display: flex; gap: 12px; margin-top: 10px;">
+                    <button type="submit" class="premium-btn-primary" id="egresoSubmitBtn" style="flex: 2;">
+                        <i class="fa-solid fa-plus"></i> Agregar Egreso
+                    </button>
+                    <button type="button" class="premium-btn-secondary" onclick="limpiarFormularioEgreso()" style="flex: 1;">
+                        <i class="fa-solid fa-eraser"></i> Limpiar
+                    </button>
+                </div>
             </form>
             <div class="premium-modal-content">
                 <h4>📋 Egresos registrados</h4>
@@ -3378,6 +3389,56 @@
             <div class="premium-modal-footer">
                 <button class="premium-btn-secondary" onclick="closeEgresosModal()">Cerrar</button>
             </div>
+        </div>
+    </div>
+
+    <!-- Edit Egreso Modal -->
+    <div id="editEgresoOverlay" class="premium-modal-overlay">
+        <div class="premium-modal-container">
+            <button class="premium-modal-close" onclick="closeEditEgresoModal()" aria-label="Cerrar">
+                <i class="fa-solid fa-xmark"></i>
+            </button>
+            <div class="premium-modal-header">
+                <div class="premium-modal-icon">
+                    <i class="fa-solid fa-pencil"></i>
+                </div>
+                <h3>Editar Egreso</h3>
+                <p>Modifica los detalles de este gasto</p>
+            </div>
+            <form class="premium-modal-form" onsubmit="event.preventDefault(); updateEgresoManual();">
+                <div class="premium-form-row">
+                    <div class="premium-form-group">
+                        <label for="editEgresoTipo">Tipo de Egreso</label>
+                        <select id="editEgresoTipo" class="premium-input">
+                            <option value="Egresos">📊 Egresos</option>
+                            <option value="Facebook ads">📘 Facebook Ads</option>
+                            <option value="Tik Tok ads">🎵 TikTok Ads</option>
+                        </select>
+                    </div>
+                    <div class="premium-form-group">
+                        <label for="editEgresoMonto">Monto (RD$)</label>
+                        <input id="editEgresoMonto" type="number" step="0.01" placeholder="0.00" class="premium-input premium-input-number" required>
+                    </div>
+                </div>
+                <div class="premium-form-row">
+                    <div class="premium-form-group full-width" style="flex: 2;">
+                        <label for="editEgresoDesc">Descripción del egreso</label>
+                        <input id="editEgresoDesc" type="text" placeholder="Describe el egreso..." class="premium-input" required>
+                    </div>
+                    <div class="premium-form-group" style="flex: 1;">
+                        <label for="editEgresoFecha">Fecha</label>
+                        <input id="editEgresoFecha" type="date" class="premium-input">
+                    </div>
+                </div>
+                <div style="display: flex; gap: 12px; margin-top: 10px;">
+                    <button type="submit" class="premium-btn-primary" style="flex: 2; background: #347cff;">
+                        <i class="fa-solid fa-save"></i> Guardar Cambios
+                    </button>
+                    <button type="button" class="premium-btn-secondary" onclick="closeEditEgresoModal()" style="flex: 1;">
+                        Cancelar
+                    </button>
+                </div>
+            </form>
         </div>
     </div>
 
@@ -4459,7 +4520,7 @@
         async function applyClientSuspend(clientId, suspended, reason = '') {
             try {
                 const response = await fetch(`/api/admin/clients/${clientId}/suspend`, {
-                    method: 'PATCH',
+                    method: 'POST',
                     headers: getAuthHeaders({ 'Content-Type': 'application/json' }),
                     body: JSON.stringify({ suspended: suspended ? 1 : 0, reason: reason || '' })
                 });
@@ -4896,33 +4957,32 @@
                             </div>
                         </div>
                         <div class="client-row-actions">
-                            <button class="mini-btn" onclick="selectClientForEdit(${client.id})" data-action="edit" data-client-id="${client.id}">Ver / Editar</button>
-                            <button class="mini-btn warn" onclick="toggleClientSuspend(${client.id})" data-action="suspend" data-client-id="${client.id}">${isSuspended ? 'Reactivar' : 'Suspender'}</button>
-                            <button class="mini-btn danger" onclick="deleteClient(${client.id})" data-action="delete" data-client-id="${client.id}">Eliminar</button>
+                            <button type="button" class="mini-btn" onclick="return handleAdminClientAction('edit', ${client.id});">Ver / Editar</button>
+                            <button type="button" class="mini-btn warn" onclick="return handleAdminClientAction('suspend', ${client.id});">${isSuspended ? 'Reactivar' : 'Suspender'}</button>
+                            <button type="button" class="mini-btn danger" onclick="return handleAdminClientAction('delete', ${client.id});">Eliminar</button>
                         </div>
                     </div>
                 `;
             }).join('');
         }
 
-            let _adminClientEventsAttached = false;
-            function setupAdminClientEvents() {
-                if (_adminClientEventsAttached) return;
-                const listEl = document.getElementById('ssClientsList');
-                if (!listEl) return;
-                _adminClientEventsAttached = true;
-                listEl.addEventListener('click', function(e) {
-                    const btn = e.target.closest('button[data-action]');
-                    if (!btn) return;
-                    if (btn.hasAttribute('onclick')) return;
-                    const action = btn.dataset.action;
-                    const clientId = Number(btn.dataset.clientId);
-                    if (!clientId) return;
-                    if (action === 'edit') { selectClientForEdit(clientId); }
-                    else if (action === 'suspend') { toggleClientSuspend(clientId); }
-                    else if (action === 'delete') { deleteClient(clientId); }
-                });
+        function handleAdminClientAction(action, clientId) {
+            try {
+                if (!isAdminUser()) {
+                    showAlert('Solo disponible para administradores.', 'warning');
+                    return false;
+                }
+                const id = Number(clientId);
+                if (!id) return false;
+                if (action === 'edit') selectClientForEdit(id);
+                else if (action === 'suspend') toggleClientSuspend(id);
+                else if (action === 'delete') deleteClient(id);
+            } catch (err) {
+                console.error('handleAdminClientAction error:', err);
+                showAlert('No se pudo ejecutar la acción del cliente.', 'error');
             }
+            return false;
+        }
 
         function clearSelectedClient() {
             selectedClientId = null;
@@ -4967,7 +5027,6 @@
                 }
                 adminClientsCache = Array.isArray(data.clients) ? data.clients : [];
                 renderAdminClients();
-                    setupAdminClientEvents();
             } catch (err) {
                 console.error('loadAdminClients error:', err);
                 if (listEl) listEl.innerHTML = `<div class="egresos-empty">${err.message || 'Error cargando clientes'}</div>`;
@@ -5039,8 +5098,8 @@
         function deleteClient(clientId) {
             showConfirmModal('Eliminar cliente', 'Esta acción eliminará la cuenta del cliente. ¿Deseas continuar?', async () => {
                 try {
-                    const response = await fetch(`/api/admin/clients/${clientId}`, {
-                        method: 'DELETE',
+                    const response = await fetch(`/api/admin/clients/${clientId}/delete`, {
+                        method: 'POST',
                         headers: getAuthHeaders()
                     });
                     const data = await response.json();
@@ -6616,13 +6675,18 @@ function processScheduledSavings() {
             renderPersonalPro();
         }
 
+        window.editingEgresoIndex = null;
+
         function addEgresoManual() {
             const tipo = document.getElementById('egresoTipo').value;
             const desc = document.getElementById('egresoDesc').value;
             const monto = parseMoney(document.getElementById('egresoMonto').value || 0);
+            const fechaInput = document.getElementById('egresoFecha').value;
             if (!desc || monto <= 0) return;
             
-            const egreso = { tipo, desc, monto, fecha: getDominicanTime() };
+            const fecha = fechaInput ? fechaInput + ' 12:00:00' : getDominicanTime();
+            const egreso = { tipo, desc, monto, fecha };
+            
             appState.egresosManuales = appState.egresosManuales || [];
             appState.egresosManuales.push(egreso);
             
@@ -6630,9 +6694,63 @@ function processScheduledSavings() {
             
             document.getElementById('egresoDesc').value = '';
             document.getElementById('egresoMonto').value = '';
+            document.getElementById('egresoFecha').value = '';
+            
             renderEgresosLists();
-            updateRestaCard();
-            updateAdsReportCard();
+            if(typeof updateRestaCard === 'function') updateRestaCard();
+            if(typeof updateAdsReportCard === 'function') updateAdsReportCard();
+        }
+
+        function editEgreso(index) {
+            const egreso = appState.egresosManuales[index];
+            if (!egreso) return;
+            
+            document.getElementById('editEgresoTipo').value = egreso.tipo || 'Egresos';
+            document.getElementById('editEgresoDesc').value = egreso.desc || '';
+            document.getElementById('editEgresoMonto').value = egreso.monto || '';
+            
+            if (egreso.fecha) {
+                const datePart = egreso.fecha.split(' ')[0];
+                document.getElementById('editEgresoFecha').value = datePart;
+            } else {
+                document.getElementById('editEgresoFecha').value = '';
+            }
+            
+            window.editingEgresoIndex = index;
+            document.getElementById('editEgresoOverlay').classList.add('active');
+        }
+
+        function closeEditEgresoModal() {
+            document.getElementById('editEgresoOverlay').classList.remove('active');
+            window.editingEgresoIndex = null;
+        }
+
+        function updateEgresoManual() {
+            if (window.editingEgresoIndex === null || window.editingEgresoIndex === undefined) return;
+            
+            const tipo = document.getElementById('editEgresoTipo').value;
+            const desc = document.getElementById('editEgresoDesc').value;
+            const monto = parseMoney(document.getElementById('editEgresoMonto').value || 0);
+            const fechaInput = document.getElementById('editEgresoFecha').value;
+            if (!desc || monto <= 0) return;
+            
+            const fecha = fechaInput ? fechaInput + ' 12:00:00' : getDominicanTime();
+            const egreso = { tipo, desc, monto, fecha };
+            
+            appState.egresosManuales[window.editingEgresoIndex] = egreso;
+            saveState();
+            
+            closeEditEgresoModal();
+            renderEgresosLists();
+            if(typeof updateRestaCard === 'function') updateRestaCard();
+            if(typeof updateAdsReportCard === 'function') updateAdsReportCard();
+        }
+
+        function limpiarFormularioEgreso() {
+            document.getElementById('egresoTipo').value = 'Egresos';
+            document.getElementById('egresoDesc').value = '';
+            document.getElementById('egresoMonto').value = '';
+            document.getElementById('egresoFecha').value = '';
         }
 
         function getEgresosManualTotal(tipo) {
@@ -6655,11 +6773,14 @@ function processScheduledSavings() {
             
             let html = '';
             egresos.forEach((e, i) => {
-                html += `<div class="egresos-row" style="justify-content: space-between;">
-                    <span>${e.desc}</span>
-                    <div style="display: flex; align-items: center; gap: 8px;">
-                        <span>${formatRD(e.monto)}</span>
-                        <button onclick="deleteEgreso(${i})" style="background: #ff5d5d; border: none; border-radius: 4px; color: white; cursor: pointer; padding: 2px 8px; font-size: 12px;">×</button>
+                const dateDisplay = e.fecha ? e.fecha.split(' ')[0] : '-';
+                html += `<div class="egresos-row" style="display: grid; grid-template-columns: 2fr 1fr 1fr auto; align-items: center; gap: 8px; padding: 6px 0; border-bottom: 1px dashed rgba(255,255,255,0.1);">
+                    <span style="white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-size: 12px;" title="${e.desc}">${e.desc}</span>
+                    <span style="color: #7a9cdd; font-size: 11px;">${dateDisplay}</span>
+                    <span style="font-weight: bold; font-size: 12px; text-align: right;">${formatRD(e.monto)}</span>
+                    <div style="display: flex; align-items: center; gap: 6px; justify-content: flex-end;">
+                        <button onclick="editEgreso(${i})" style="background: #347cff; border: none; border-radius: 4px; color: white; cursor: pointer; padding: 3px 6px; font-size: 11px;" title="Editar"><i class="fa-solid fa-pencil"></i></button>
+                        <button onclick="deleteEgreso(${i})" style="background: #ff5d5d; border: none; border-radius: 4px; color: white; cursor: pointer; padding: 3px 8px; font-size: 11px;" title="Eliminar"><i class="fa-solid fa-xmark"></i></button>
                     </div>
                 </div>`;
             });

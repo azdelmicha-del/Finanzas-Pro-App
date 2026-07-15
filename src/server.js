@@ -36,7 +36,7 @@ app.use(express.static(PROJECT_ROOT));
 /* ── RATE LIMITING ──────────────────────────────────────────────────── */
 const authLimiter = rateLimit({
     windowMs: 15 * 60 * 1000,
-    max: 5,
+    max: 100, // Aumentado para desarrollo local
     message: { success: false, message: 'Demasiados intentos, por favor intente más tarde.' },
     standardHeaders: true,
     legacyHeaders: false,
